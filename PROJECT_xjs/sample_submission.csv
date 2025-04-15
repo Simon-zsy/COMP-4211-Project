@@ -1,0 +1,7 @@
+id,NER Tag
+0,"['B-gpe', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'B-geo', 'O']"
+1,"['O', 'O', 'O', 'B-geo', 'O', 'O']"
+2,"['O', 'O', 'O', 'O', 'O', 'B-geo', 'B-per', 'O', 'O', 'O', 'O', 'B-gpe', 'B-tim', 'O']"
+3,"['O', 'O', 'O', 'O', 'B-gpe', 'O', 'O', 'O', 'O', 'O', 'O', 'B-gpe', 'O']"
+4,"['B-per', 'I-per', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'B-geo', 'O']"
+5,"['O', 'O', 'O', 'O', 'B-gpe', 'O', 'O', 'B-gpe', 'O', 'O', 'O', 'O', 'O', 'O', 'O']"
