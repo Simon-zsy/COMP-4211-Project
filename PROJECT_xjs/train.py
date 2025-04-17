@@ -1,79 +1,83 @@
 import torch
-from transformers import AutoModelForTokenClassification, Trainer, TrainingArguments
-from network import create_label_mappings, make_compute_metrics, BertWithAttentionAndCRF
-from data_loader import prepare_datasets
-import os
+from torch.utils.data import DataLoader
+from torch.optim import AdamW
+from transformers import  get_linear_schedule_with_warmup
+from tqdm import tqdm
+from data_loader import prepare_data_loaders
+from network import get_model
+from transformers import AutoTokenizer
 
-# 配置
-DATASET_PATH = "/localdata/szhoubx/rm/connext-backup/PROJECT_xjs"
-MODEL_PATH = "./ner_model2"
+# Step 1: Load tokenizer
+tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
 
-def main():
-    # 加载数据
-    train_ds, eval_ds, train_df = prepare_datasets(DATASET_PATH)
-    print(f"Training dataset size: {len(train_ds)}, Validation dataset size: {len(eval_ds)}")
-    
-    # 标签映射
-    label_list, label2id, id2label, class_weights = create_label_mappings(train_df)
-    
-    # 加载模型
-    model = BertWithAttentionAndCRF.from_pretrained(
-        "bert-base-cased",
-        num_labels=len(label_list),
-        id2label=id2label,
-        label2id=label2id
-    )
-    model.class_weights = class_weights
-    
-    # 冻结前 8 层
-    for param in model.bert.encoder.layer[:8].parameters():
-        param.requires_grad = False
-    
-    # 训练参数
-    training_args = TrainingArguments(
-        output_dir="./results",
-        eval_strategy="epoch",
-        learning_rate=2e-5,
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
-        num_train_epochs=10,
-        weight_decay=0.1,
-        save_strategy="epoch",
-        warmup_steps=500,
-        load_best_model_at_end=True,
-        logging_dir='./logs',
-        logging_steps=100,
-        report_to="none",
-        lr_scheduler_type="cosine",
-        metric_for_best_model="f1",
-        greater_is_better=True
-    )
-    
-    # 自定义 Trainer 以在第 2 epoch 后解冻层
-    class CustomTrainer(Trainer):
-        def training_step(self, model, inputs, gradient_accumulation_steps=1):
-            if self.state.epoch >= 2:
-                for param in model.bert.encoder.layer.parameters():
-                    param.requires_grad = True
-            return super().training_step(model, inputs)
-    
-    # 训练
-    trainer = CustomTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        compute_metrics=make_compute_metrics(id2label)
-    )
-    trainer.train()
-    
-    # 保存最佳模型
-    trainer.save_model(MODEL_PATH)
-    print(f"Best model saved to {MODEL_PATH}")
+# Step 2: Load data loaders
+train_loader, eval_loader, label2id, num_labels = prepare_data_loaders(data_path=".", model_name="bert-base-cased", batch_size=32)
 
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"Error in training: {e}")
-        raise
+# Step 3: Load model
+model = get_model(num_labels)
+
+# Step 4: Set up optimizer and scheduler
+optimizer = AdamW(model.parameters(), lr=5e-5)
+epochs = 3
+total_steps = len(train_loader) * epochs
+scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+
+# Step 5: Training loop
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+# Initialize variables for tracking the best model
+best_val_loss = float('inf')
+best_model_state = None
+
+for epoch in range(epochs):
+    # Training
+    model.train()
+    total_train_loss = 0
+    for batch in tqdm(train_loader, desc=f"Training Epoch {epoch+1}"):
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+        labels = batch['labels'].to(device)
+        
+        outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+        loss = outputs.loss
+        total_train_loss += loss.item()
+        
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        scheduler.step()
+        optimizer.zero_grad()
+    
+    print(f"Epoch {epoch+1}, Training Loss: {total_train_loss / len(train_loader)}")
+    
+    # Validation
+    model.eval()
+    total_eval_loss = 0
+    with torch.no_grad():
+        for batch in tqdm(eval_loader, desc=f"Validation Epoch {epoch+1}"):
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+            
+            outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+            loss = outputs.loss
+            total_eval_loss += loss.item()
+    
+    avg_val_loss = total_eval_loss / len(eval_loader)
+    print(f"Epoch {epoch+1}, Validation Loss: {avg_val_loss}")
+    
+    # If the current validation loss is lower than the previous best, save the model state
+    if avg_val_loss < best_val_loss:
+        best_val_loss = avg_val_loss
+        best_model_state = model.state_dict().copy()
+        print(f"New best model found at epoch {epoch+1} with validation loss: {avg_val_loss}")
+
+# After training, load the best model state
+if best_model_state is not None:
+    model.load_state_dict(best_model_state)
+    print(f"Loaded best model with validation loss: {best_val_loss}")
+
+# Step 6: Save the best model
+model.save_pretrained("fine_tuned_bert_ner2")
+tokenizer.save_pretrained("fine_tuned_bert_ner2")
