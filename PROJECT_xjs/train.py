@@ -8,16 +8,16 @@ from network import get_model
 from transformers import AutoTokenizer
 
 # Step 1: Load tokenizer
-tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
+tokenizer = AutoTokenizer.from_pretrained("bert-large-cased")
 
 # Step 2: Load data loaders
-train_loader, eval_loader, label2id, num_labels = prepare_data_loaders(data_path=".", model_name="bert-base-cased", batch_size=32)
+train_loader, eval_loader, label2id, num_labels = prepare_data_loaders(data_path=".", model_name="bert-large-cased", batch_size=32)
 
 # Step 3: Load model
 model = get_model(num_labels)
 
 # Step 4: Set up optimizer and scheduler
-optimizer = AdamW(model.parameters(), lr=5e-5)
+optimizer = AdamW(model.parameters(), lr=2e-5)
 epochs = 3
 total_steps = len(train_loader) * epochs
 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
@@ -79,5 +79,5 @@ if best_model_state is not None:
     print(f"Loaded best model with validation loss: {best_val_loss}")
 
 # Step 6: Save the best model
-model.save_pretrained("fine_tuned_bert_ner2")
-tokenizer.save_pretrained("fine_tuned_bert_ner2")
+model.save_pretrained("train_bert_large32")
+tokenizer.save_pretrained("train_bert_large32")
