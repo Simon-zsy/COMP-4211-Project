@@ -78,6 +78,44 @@ def normalize_token(token):
     
     return normalized_token if normalized_token.strip() else '[UNK]'  # Avoid empty tokens
 
+def correct_mistags(df):
+    """Correct mislabeled 'O' tags based on most frequent entity annotations."""
+    from collections import defaultdict, Counter
+    # Define tokens to skip auto-replacement (common stopwords/punctuation)
+    skip_tokens = { 'the','a','an','and','of','to','in','for','with','on','that','from',',','.',';','-','–','—','\'' }
+    # Minimum number of entity occurrences required for replacement
+    min_entity_count = 2
+    # Build mapping from token to counts of O vs entity tags
+    word_tag_counts = defaultdict(Counter)
+    word_o_counts = defaultdict(int)
+    for tokens, tags in zip(df['Sentence'], df['NER Tag']):
+        for token, tag in zip(tokens, tags):
+            if tag == 'O':
+                word_o_counts[token] += 1
+            else:
+                word_tag_counts[token][tag] += 1
+    # Replace 'O' with most common entity tag when available
+    corrected = []
+    for tokens, tags in zip(df['Sentence'], df['NER Tag']):
+        new_tags = []
+        for token, tag in zip(tokens, tags):
+            # Skip auto-correction for common tokens
+            if token.lower() in skip_tokens:
+                new_tags.append(tag)
+                continue
+            if tag == 'O' and token in word_tag_counts and word_tag_counts[token]:
+                # only replace if the top entity tag occurs more often than O and has sufficient frequency
+                top_tag, top_count = word_tag_counts[token].most_common(1)[0]
+                if top_count > word_o_counts.get(token, 0) and top_count >= min_entity_count:
+                    new_tags.append(top_tag)
+                else:
+                    new_tags.append(tag)
+            else:
+                new_tags.append(tag)
+        corrected.append(new_tags)
+    df['NER Tag'] = corrected
+    return df
+
 class NERDataset(Dataset):
     def __init__(self, hf_dataset, tokenizer, max_len=256):
         """
@@ -115,13 +153,17 @@ class NERDataset(Dataset):
             'labels': labels
         }
 
-def load_and_preprocess_data(file_path):
+def load_and_preprocess_data(file_path, correct_mistags=False):
     """Load and preprocess data, normalizing non-standard characters."""
     try:
         df = pd.read_csv(file_path)
         df['Sentence'] = df['Sentence'].apply(literal_eval)
         df['Sentence'] = df['Sentence'].apply(lambda x: [normalize_token(w.strip()) for w in x if w.strip()])
         df['NER Tag'] = df['NER Tag'].apply(literal_eval)
+        # Correct mislabeled 'O' tags based on dataset-wide entity occurrences
+        
+        if correct_mistags:
+            df = correct_mistags(df)
         
         # Validate lengths and collect valid rows
         valid_rows = []
@@ -180,11 +222,11 @@ def tokenize_and_align_labels(examples, tokenizer, label2id):
     tokenized_inputs["label_ids"] = labels
     return tokenized_inputs
 
-def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32, validation_split=0.2):
+def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32, validation_split=0.2, correct_mistags=False):
     """Prepare PyTorch DataLoaders for training and validation."""
     try:
         # Load and preprocess data
-        full_df = load_and_preprocess_data(f"{data_path}/train.csv")
+        full_df = load_and_preprocess_data(f"{data_path}/train.csv", correct_mistags=correct_mistags)
         
         # Split into train and validation
         train_df, eval_df = train_test_split(full_df, test_size=validation_split, random_state=42)
@@ -226,3 +268,31 @@ def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32
     except Exception as e:
         print(f"Failed to prepare data loaders: {e}")
         raise
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Test correct_mistags and log changed tags.")
+    parser.add_argument("--file", type=str, default="train.csv", help="Path to input CSV file")
+    args = parser.parse_args()
+    # Load raw data
+    df = pd.read_csv(args.file)
+    df['Sentence'] = df['Sentence'].apply(literal_eval)
+    df['NER Tag'] = df['NER Tag'].apply(literal_eval)
+    # Keep original tags and record ids for comparison
+    orig_tags = [list(tags) for tags in df['NER Tag']]
+    orig_ids = df['id'].tolist()
+    # Apply correction
+    corr_df = correct_mistags(df.copy())
+    new_tags = corr_df['NER Tag']
+    # Collect changes
+    changes = []
+    for idx, (tokens, o_tags, n_tags) in enumerate(zip(df['Sentence'], orig_tags, new_tags)):
+        sent_id = orig_ids[idx]
+        for token, o, n in zip(tokens, o_tags, n_tags):
+            if o == 'O' and n != 'O':
+                changes.append(f"sentence id: {sent_id}, replaced the tag for '{token}' with '{n}'")
+    # Write to log file
+    log_file = "changed_tags.txt"
+    with open(log_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(changes))
+    print(f"Logged {len(changes)} changes to '{log_file}'")

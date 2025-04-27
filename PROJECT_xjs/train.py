@@ -11,7 +11,10 @@ from transformers import AutoTokenizer
 tokenizer = AutoTokenizer.from_pretrained("bert-large-cased")
 
 # Step 2: Load data loaders
-train_loader, eval_loader, label2id, num_labels = prepare_data_loaders(data_path=".", model_name="bert-large-cased", batch_size=32)
+train_loader, eval_loader, label2id, num_labels = prepare_data_loaders(data_path=".", 
+                                                                       model_name="bert-large-cased", 
+                                                                       batch_size=32,
+                                                                       correct_mistags=True)
 
 # Step 3: Load model
 model = get_model(num_labels)
