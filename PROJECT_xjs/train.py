@@ -14,7 +14,7 @@ tokenizer = AutoTokenizer.from_pretrained("bert-large-cased")
 train_loader, eval_loader, label2id, num_labels = prepare_data_loaders(data_path=".", 
                                                                        model_name="bert-large-cased", 
                                                                        batch_size=32,
-                                                                       correct_mistags=True)
+                                                                       apply_mistag_correction=True)
 
 # Step 3: Load model
 model = get_model(num_labels)

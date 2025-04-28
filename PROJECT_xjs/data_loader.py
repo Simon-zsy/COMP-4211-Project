@@ -153,7 +153,7 @@ class NERDataset(Dataset):
             'labels': labels
         }
 
-def load_and_preprocess_data(file_path, correct_mistags=False):
+def load_and_preprocess_data(file_path, apply_mistag_correction=False):
     """Load and preprocess data, normalizing non-standard characters."""
     try:
         df = pd.read_csv(file_path)
@@ -162,7 +162,7 @@ def load_and_preprocess_data(file_path, correct_mistags=False):
         df['NER Tag'] = df['NER Tag'].apply(literal_eval)
         # Correct mislabeled 'O' tags based on dataset-wide entity occurrences
         
-        if correct_mistags:
+        if apply_mistag_correction:
             df = correct_mistags(df)
         
         # Validate lengths and collect valid rows
@@ -222,11 +222,13 @@ def tokenize_and_align_labels(examples, tokenizer, label2id):
     tokenized_inputs["label_ids"] = labels
     return tokenized_inputs
 
-def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32, validation_split=0.2, correct_mistags=False):
+def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32, 
+                         validation_split=0.2, apply_mistag_correction=False):
     """Prepare PyTorch DataLoaders for training and validation."""
     try:
         # Load and preprocess data
-        full_df = load_and_preprocess_data(f"{data_path}/train.csv", correct_mistags=correct_mistags)
+        full_df = load_and_preprocess_data(f"{data_path}/train.csv", 
+                                          apply_mistag_correction=apply_mistag_correction)
         
         # Split into train and validation
         train_df, eval_df = train_test_split(full_df, test_size=validation_split, random_state=42)
