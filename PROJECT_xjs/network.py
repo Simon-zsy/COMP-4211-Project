@@ -1,4 +1,4 @@
-from transformers import BertForTokenClassification
+from transformers import DebertaV2ForTokenClassification
 
 def get_model(num_labels):
-    return BertForTokenClassification.from_pretrained("bert-large-cased", num_labels=num_labels)
+    return DebertaV2ForTokenClassification.from_pretrained("microsoft/deberta-v3-large", num_labels=num_labels)

@@ -135,7 +135,7 @@ class NERDataset(Dataset):
         # 直接使用预处理过的数据，不再需要处理原始的句子和标签
         example = self.dataset[idx]
         
-        # 这里假设example中已经包含input_ids, attention_mask和label_ids
+        # 这里假设example中已经包含input_ids, attention_mask和labels
         input_ids = torch.tensor(example['input_ids'], dtype=torch.long)
         attention_mask = torch.tensor(example['attention_mask'], dtype=torch.long)
         
@@ -219,7 +219,7 @@ def tokenize_and_align_labels(examples, tokenizer, label2id):
             previous_word_idx = word_idx
         labels.append(label_ids)
     
-    tokenized_inputs["label_ids"] = labels
+    tokenized_inputs["labels"] = labels
     return tokenized_inputs
 
 def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32, 
@@ -258,7 +258,6 @@ def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32
         )
         
         # 直接使用预处理后的数据创建PyTorch datasets
-        # 注意这里不再需要使用tokenizer进行处理
         train_dataset = NERDataset(train_ds, tokenizer)
         eval_dataset = NERDataset(eval_ds, tokenizer)
         
@@ -266,7 +265,7 @@ def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         eval_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
         
-        return train_loader, eval_loader, label2id, len(label2id)
+        return train_loader, eval_loader, label2id, len(label2id), tokenizer
     except Exception as e:
         print(f"Failed to prepare data loaders: {e}")
         raise

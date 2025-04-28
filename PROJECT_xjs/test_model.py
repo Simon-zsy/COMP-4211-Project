@@ -174,7 +174,7 @@ def predict_and_save(model_path, test_ds, train_df, output_file="submission.csv"
 
 def main():
     # Configuration
-    model_path = "fine_tuned_bert_ner"
+    model_path = "train_deberta_v3_large32"
     test_file = "test.csv"
     train_file = "/localdata/szhoubx/rm/connext-backup/PROJECT_xjs/train.csv"
     output_file = "submission.csv"
