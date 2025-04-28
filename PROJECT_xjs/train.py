@@ -7,6 +7,8 @@ from tqdm import tqdm
 from data_loader import prepare_data_loaders
 from network import get_model
 from torch.cuda.amp import autocast, GradScaler
+import numpy as np
+from sklearn.metrics import f1_score, accuracy_score
 
 
 MODEL_NAME = "microsoft/deberta-v3-large"
@@ -19,6 +21,7 @@ train_loader, eval_loader, label2id, num_labels, tokenizer = prepare_data_loader
     model_name=MODEL_NAME, 
     batch_size=total_batch_size
 )
+o_tag_id = label2id.get('O', None)
 
 # Step 2: Load model
 model = get_model(MODEL_NAME, num_labels)
@@ -49,6 +52,8 @@ for epoch in range(epochs):
     # Training
     model.train()
     total_train_loss = 0
+    train_preds = []
+    train_labels_list = []
     for batch in tqdm(train_loader, desc=f"Training Epoch {epoch+1}"):
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
@@ -56,15 +61,18 @@ for epoch in range(epochs):
         
         with torch.amp.autocast(device):
             outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+        logits = outputs.logits
+        preds = torch.argmax(logits, dim=-1).detach().cpu().numpy()
+        labels_np = labels.detach().cpu().numpy()
+        flat_preds = preds.flatten()
+        flat_labels = labels_np.flatten()
+        mask = flat_labels != o_tag_id
+        train_preds.extend(flat_preds[mask])
+        train_labels_list.extend(flat_labels[mask])
+        
         loss = outputs.loss
         loss = loss.mean()  # Reduce loss to scalar for multi-GPU
         total_train_loss += loss.item()  # Log scalar loss
-        
-        # loss.backward()
-        # torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        # optimizer.step()
-        # scheduler.step()
-        # optimizer.zero_grad()
         
         scaler.scale(loss).backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -73,11 +81,16 @@ for epoch in range(epochs):
         scheduler.step()
         optimizer.zero_grad()
     
-    print(f"Epoch {epoch+1}, Training Loss: {total_train_loss / len(train_loader)}")
-    
+    avg_train_loss = total_train_loss / len(train_loader)
+    train_f1 = f1_score(train_labels_list, train_preds, average='macro')
+    train_acc = accuracy_score(train_labels_list, train_preds)
+    print(f"Epoch {epoch+1}, Training Loss: {avg_train_loss:.4f}, F1: {train_f1:.4f}, Acc: {train_acc:.4f}")
+
     # Validation
     model.eval()
     total_eval_loss = 0
+    val_preds = []
+    val_labels_list = []
     with torch.no_grad():
         for batch in tqdm(eval_loader, desc=f"Validation Epoch {epoch+1}"):
             input_ids = batch['input_ids'].to(device)
@@ -85,19 +98,30 @@ for epoch in range(epochs):
             labels = batch['labels'].to(device)
             
             outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
+            logits = outputs.logits
+            preds = torch.argmax(logits, dim=-1).detach().cpu().numpy()
+            labels_np = labels.detach().cpu().numpy()
+            flat_preds = preds.flatten()
+            flat_labels = labels_np.flatten()
+            mask = flat_labels != o_tag_id
+            val_preds.extend(flat_preds[mask])
+            val_labels_list.extend(flat_labels[mask])
+            
             loss = outputs.loss
             loss = loss.mean()  # Reduce loss to scalar for multi-GPU
             total_eval_loss += loss.item()  # Log scalar loss
     
     avg_val_loss = total_eval_loss / len(eval_loader)
-    print(f"Epoch {epoch+1}, Validation Loss: {avg_val_loss}")
+    val_f1 = f1_score(val_labels_list, val_preds, average='macro')
+    val_acc = accuracy_score(val_labels_list, val_preds)
+    print(f"Epoch {epoch+1}, Validation Loss: {avg_val_loss:.4f}, F1: {val_f1:.4f}, Acc: {val_acc:.4f}")
     
     # If the current validation loss is lower than the previous best, save the model state
     if avg_val_loss < best_val_loss:
         best_val_loss = avg_val_loss
         # Save the state of the underlying model (not the DataParallel wrapper)
         best_model_state = model.module.state_dict().copy() if isinstance(model, nn.DataParallel) else model.state_dict().copy()
-        print(f"New best model found at epoch {epoch+1} with validation loss: {avg_val_loss}")
+        print(f"New best model found at epoch {epoch+1} with validation loss: {avg_val_loss:.4f}")
 
 # After training, load the best model state
 if best_model_state is not None:
