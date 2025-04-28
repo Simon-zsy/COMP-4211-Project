@@ -1,4 +1,4 @@
-from transformers import DebertaV2ForTokenClassification
+from transformers import AutoModelForTokenClassification
 
-def get_model(num_labels):
-    return DebertaV2ForTokenClassification.from_pretrained("microsoft/deberta-v3-large", num_labels=num_labels)
+def get_model(model, num_labels):
+    return AutoModelForTokenClassification.from_pretrained(model, num_labels=num_labels)
