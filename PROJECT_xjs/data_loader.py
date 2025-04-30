@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
 from torch.utils.data import Dataset, DataLoader
 import torch
-from collections import Counter
+from collections import Counter, defaultdict
 
 def create_label_mappings(train_df):
     """Generate label mappings from training data."""
@@ -67,13 +67,15 @@ def normalize_token(token):
             normalized_token += non_standard_map[char]
         elif ord(char) < 32 or ord(char) >= 127:  # Control or non-ASCII characters
             unhandled_chars.append((char, ord(char)))
-            normalized_token += '[UNK]'  # Replace with placeholder
+            # normalized_token += '[UNK]'  # Replace with placeholder
+            normalized_token += 'O'  # Replace with tag 'O'
+
         else:
             normalized_token += char
     
     # Log unhandled characters if any
     if unhandled_chars:
-        with open("unhandled_tokens.txt", "a") as f:
+        with open("unhandled_tokens.txt", "a", encoding="utf-8") as f:
             f.write(f"Token: {token}, Unhandled chars: {unhandled_chars}\n")
     
     return normalized_token if normalized_token.strip() else '[UNK]'  # Avoid empty tokens
@@ -176,7 +178,7 @@ def load_and_preprocess_data(file_path, apply_mistag_correction=False):
         
         # Log skipped rows
         if skipped_rows:
-            with open("skipped_rows.txt", "w") as f:
+            with open("skipped_rows.txt", "w", encoding="utf-8") as f:
                 f.write("\n".join(skipped_rows))
             print(f"Skipped {len(skipped_rows)} rows with mismatched lengths. Details in 'skipped_rows.txt'")
         
@@ -270,13 +272,9 @@ def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32
         print(f"Failed to prepare data loaders: {e}")
         raise
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Test correct_mistags and log changed tags.")
-    parser.add_argument("--file", type=str, default="train.csv", help="Path to input CSV file")
-    args = parser.parse_args()
+def correct_mistag_test():
     # Load raw data
-    df = pd.read_csv(args.file)
+    df = pd.read_csv("train.csv")
     df['Sentence'] = df['Sentence'].apply(literal_eval)
     df['NER Tag'] = df['NER Tag'].apply(literal_eval)
     # Keep original tags and record ids for comparison
@@ -297,3 +295,110 @@ if __name__ == "__main__":
     with open(log_file, "w", encoding="utf-8") as f:
         f.write("\n".join(changes))
     print(f"Logged {len(changes)} changes to '{log_file}'")
+
+def extract_low_freq_sentences(file_path, target_tags, output_csv):
+    """
+    Extract sentences that contain any of the target_tags and save to a CSV.
+    Rows are ordered by the order of first occurrence of tags in target_tags.
+    """
+    df = pd.read_csv(file_path)
+    # Parse list-like columns
+    df['Sentence'] = df['Sentence'].apply(literal_eval)
+    df['NER Tag'] = df['NER Tag'].apply(literal_eval)
+    records = []
+    for _, row in df.iterrows():
+        # Find matching tags in this row
+        matched = [tag for tag in row['NER Tag'] if tag in target_tags]
+        if matched:
+            # Keep original token list format for text
+            text = row['Sentence']
+            # Include the full list of tags and matched tags for sorting
+            records.append({
+                'id': row.get('id', None),
+                'text': text,
+                'tags': row['NER Tag'],  # all tags for this sentence
+                'matched': matched       # only target tags for sorting
+            })
+    # Sort by the order of the first matched target tag
+    records.sort(key=lambda rec: min(target_tags.index(t) for t in rec['matched']))
+    # Prepare output records without the helper 'matched' field
+    output_records = [{'id': rec['id'], 'text': rec['text'], 'tags': rec['tags']} for rec in records]
+    out_df = pd.DataFrame(output_records)
+    out_df.to_csv(output_csv, index=False)
+
+if __name__ == "__main__":
+    import csv
+    # correct_mistag_test()
+    df = pd.read_csv("train.csv")
+    df['Sentence'] = df['Sentence'].apply(literal_eval)
+    # Normalize tokens to remove non-standard characters
+    df['Sentence'] = df['Sentence'].apply(lambda x: [normalize_token(w.strip()) for w in x if w.strip()])
+    df['NER Tag'] = df['NER Tag'].apply(literal_eval)
+    
+    # Print all unique tags
+    all_tags = set()    
+    for tags in df['NER Tag']:
+        all_tags.update(tags)
+    
+    print("Unique tags:", all_tags)
+    
+    # Print the word counts for each tag
+    tag_counts = Counter()
+    for tags in df['NER Tag']:
+        tag_counts.update(tags)
+    print("Tag counts:", tag_counts)
+    
+    # Print the word that tagged with multiple tags
+    word_tag_counts = defaultdict(Counter)
+    # Track which words appear in each sentence
+    sentence_word_map = defaultdict(set)
+
+    # First pass: count tags per word and track words in sentences
+    for i, (tokens, tags) in enumerate(zip(df['Sentence'], df['NER Tag'])):
+        for token, tag in zip(tokens, tags):
+            word_tag_counts[token][tag] += 1
+            sentence_word_map[token].add(i)  # Record that this word appears in sentence i
+
+    # Find words with multiple tags
+    ambiguous_words = {word for word, counts in word_tag_counts.items() if len(counts) > 1}
+
+    # Write results to CSV
+    with open('ambiguous_words.csv', 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Word', 'Tag Counts', 'Sentence Count'])
+        
+        for word, counts in sorted(word_tag_counts.items()):
+            if len(counts) > 1:
+                # Format the tag counts as a string
+                counts_str = '; '.join([f"{tag}: {count}" for tag, count in counts.items()])
+                # Number of sentences containing this word
+                sentence_count = len(sentence_word_map[word])
+                writer.writerow([word, counts_str, sentence_count])
+                
+    print(f"Data written to ambiguous_words.csv")
+    # Find sentences that contain ambiguous words and the ambiguous words in them (in order)
+    sentences_with_ambiguous = {}
+    for sent_idx, (tokens, _) in enumerate(zip(df['Sentence'], df['NER Tag'])):
+        # Check if any word in this sentence is ambiguous
+        amb_words_in_sent = [token for token in tokens if token in ambiguous_words]
+        if amb_words_in_sent:
+            # Get original sentence ID
+            sent_id = df.iloc[sent_idx]['id']
+            sentences_with_ambiguous[sent_id] = amb_words_in_sent
+
+    # Write results to CSV by sentence
+    with open('sentences_with_ambiguous.csv', 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Sentence ID', 'Ambiguous Words'])
+        
+        for sent_id, words in sorted(sentences_with_ambiguous.items()):
+            # Join all ambiguous words in this sentence with a comma
+            words_str = ', '.join(words)
+            writer.writerow([sent_id, words_str])
+
+    print(f"Found {len(sentences_with_ambiguous)} sentences with ambiguous words.")
+    print(f"Data written to sentences_with_ambiguous.csv")
+    # Extract sentences with low-frequency tags
+    low_tags = ['I-art', 'B-eve', 'I-eve', 'B-nat', 'I-gpe', 'I-nat']
+    extract_low_freq_sentences('train.csv', low_tags, 'low_freq_sentences.csv')
+    print('Extracted sentences with low-frequency tags to low_freq_sentences.csv')
