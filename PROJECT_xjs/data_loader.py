@@ -180,7 +180,7 @@ def tokenize_and_align_labels(examples, tokenizer, label2id):
     tokenized_inputs["label_ids"] = labels
     return tokenized_inputs
 
-def prepare_data_loaders(data_path, model_name="bert-large-cased", batch_size=32, validation_split=0.2):
+def prepare_data_loaders(data_path, model_name="0.864020", batch_size=32, validation_split=0.2):
     """Prepare PyTorch DataLoaders for training and validation."""
     try:
         # Load and preprocess data

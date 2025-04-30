@@ -1,26 +1,45 @@
 import torch
 from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader
 from torch.optim import AdamW
-from transformers import  get_linear_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup
 from tqdm import tqdm
 from data_loader import prepare_data_loaders
 from network import get_model
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch.nn.init as init
 
 # Step 1: Load tokenizer
-tokenizer = AutoTokenizer.from_pretrained("bert-large-cased")
+tokenizer = AutoTokenizer.from_pretrained("0.864020")
 
 # Step 2: Load data loaders
-train_loader, eval_loader, label2id, num_labels = prepare_data_loaders(data_path=".", model_name="bert-large-cased", batch_size=32)
+train_loader, eval_loader, label2id, num_labels = prepare_data_loaders(data_path=".", model_name="0.864020", batch_size=32)
 
 # Step 3: Load model
 model = get_model(num_labels)
 
+# Freeze BERT weights
+for param in model.bert.parameters():
+    param.requires_grad = False
+
+# Initialize classifier weights with Kaiming initialization
+if hasattr(model, 'classifier'):
+    if hasattr(model.classifier, 'weight'):
+        init.kaiming_normal_(model.classifier.weight, nonlinearity='relu')
+    if hasattr(model.classifier, 'bias') and model.classifier.bias is not None:
+        init.zeros_(model.classifier.bias)
+elif hasattr(model, 'out_proj'):  # Some models use out_proj
+    if hasattr(model.out_proj, 'weight'):
+        init.kaiming_normal_(model.out_proj.weight, nonlinearity='relu')
+    if hasattr(model.out_proj, 'bias') and model.out_proj.bias is not None:
+        init.zeros_(model.out_proj.bias)
+# Add more conditions if your model has a different classifier structure
+
 # Step 4: Set up optimizer and scheduler
 optimizer = AdamW(model.parameters(), lr=2e-5)
-epochs = 3
+epochs = 10
 total_steps = len(train_loader) * epochs
-scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=100, num_training_steps=total_steps)
 
 # Step 5: Training loop
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -79,5 +98,5 @@ if best_model_state is not None:
     print(f"Loaded best model with validation loss: {best_val_loss}")
 
 # Step 6: Save the best model
-model.save_pretrained("train_bert_large32")
-tokenizer.save_pretrained("train_bert_large32")
+model.save_pretrained("train_bert_2e-5")
+tokenizer.save_pretrained("train_bert_2e-5")

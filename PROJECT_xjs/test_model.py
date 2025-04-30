@@ -1,10 +1,11 @@
 import pandas as pd
 from ast import literal_eval
 from datasets import Dataset
-from transformers import AutoTokenizer, AutoModelForTokenClassification, Trainer
+from transformers import AutoTokenizer, Trainer
 import numpy as np
 from data_loader import create_label_mappings
 from data_loader import load_and_preprocess_data
+import torch
 
 def normalize_token(token):
     """Normalize non-standard characters to standard equivalents or a placeholder."""
@@ -65,25 +66,29 @@ def load_test_data(file_path):
 def predict_and_save(model_path, test_ds, train_df, output_file="submission.csv"):
     """Predict NER tags and save submission."""
     try:
-        # Load model and tokenizer
-        model = AutoModelForTokenClassification.from_pretrained(model_path)
+        # Load label mappings from training data first to get num_labels
+        label_list, label2id, id2label, _ = create_label_mappings(train_df)
+        num_labels = len(label2id)
+        
+        # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(model_path)
+        
+        # Load model using the same custom structure
+        from network import get_model
+        model = get_model(num_labels)
+        
+        # Load the trained weights from safetensors format
+        from safetensors import safe_open
+        from safetensors.torch import load_model
+        
+        # Use load_model for loading safetensors
+        load_model(model, f"{model_path}/model.safetensors")
     except Exception as e:
         print(f"Failed to load model or tokenizer from {model_path}: {e}")
         raise
     
-    # Load label mappings from training data
-    try:
-        label_list, label2id, id2label, _ = create_label_mappings(train_df)
-    except Exception as e:
-        print(f"Failed to create label mappings: {e}")
-        id2label = model.config.id2label
-        label2id = model.config.label2id
-        if not id2label:
-            print("Warning: id2label not found in model config. Using default labels.")
-            id2label = {i: f"LABEL_{i}" for i in range(model.config.num_labels)}
-        label_list = list(label2id.keys())
-    
+    # Rest of your code remains the same
+    # ...
     def tokenize(examples):
         """Tokenize sentences for prediction."""
         tokenized = tokenizer(
@@ -174,10 +179,10 @@ def predict_and_save(model_path, test_ds, train_df, output_file="submission.csv"
 
 def main():
     # Configuration
-    model_path = "fine_tuned_bert_ner"
-    test_file = "test.csv"
+    model_path = "/localdata/szhoubx/rm/connext-backup/PROJECT_xjs/train_bert_2e-5"
+    test_file = "train.csv"
     train_file = "/localdata/szhoubx/rm/connext-backup/PROJECT_xjs/train.csv"
-    output_file = "submission.csv"
+    output_file = "2e-5.csv"
     
     # Load test and train data
     test_df = load_test_data(test_file)
