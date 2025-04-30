@@ -12,6 +12,8 @@ from sklearn.metrics import f1_score, accuracy_score
 
 
 MODEL_NAME = "microsoft/deberta-v3-large"
+USE_MIXED_PRECISION = False  # Set to True if using GPUs with Tensor Cores (e.g., NVIDIA Volta, Turing, or Ampere architectures)
+epochs = 3
 
 # Step 1: Load data loaders and tokenizer
 # Set total batch size to 32, to be split across GPUs
@@ -38,10 +40,9 @@ model.to(device)
 
 # Step 4: Set up optimizer and scheduler
 optimizer = AdamW(model.parameters(), lr=2e-5)
-epochs = 3
 total_steps = len(train_loader) * epochs
 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
-scaler = torch.amp.GradScaler(device)  # For mixed precision training
+scaler = torch.amp.GradScaler("cuda" if torch.cuda.is_available() else "cpu", enabled=USE_MIXED_PRECISION)  # For mixed precision training
 
 # Step 5: Training loop
 # Initialize variables for tracking the best model
@@ -59,7 +60,7 @@ for epoch in range(epochs):
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['labels'].to(device)
         
-        with torch.amp.autocast(device):
+        with torch.amp.autocast("cuda" if torch.cuda.is_available() else "cpu", enabled=USE_MIXED_PRECISION):
             outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
         logits = outputs.logits
         preds = torch.argmax(logits, dim=-1).detach().cpu().numpy()
